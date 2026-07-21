@@ -12,11 +12,11 @@ body{font-family:'Helvetica Neue',Arial,'Hiragino Kaku Gothic ProN',sans-serif;f
 body.mode-check{background:#cfe2f7}
 body.mode-draft-input{background:#f7d5d5}
 body.mode-draft-paste{background:#d2f2dc}
-header{background:#951327;color:#fff;padding:12px 20px;display:flex;align-items:center;gap:10px;transition:background .3s}
+header{background:#951327;color:#fff;padding:12px 20px;display:flex;align-items:center;gap:10px;transition:background .3s;position:relative}
 body.mode-check header{background:#2c5f99}
 body.mode-draft-input header{background:#951327}
 body.mode-draft-paste header{background:#1f7a45}
-header h1{font-size:15px;font-weight:500;letter-spacing:.05em}
+header h1{font-size:15px;font-weight:500;letter-spacing:.05em;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);white-space:nowrap;pointer-events:none}
 header span{font-size:11px;opacity:.7;margin-left:auto}
 .btn-reset{padding:5px 14px;border:1px solid rgba(255,255,255,.5);border-radius:6px;background:transparent;color:#fff;font-size:12px;cursor:pointer;font-family:inherit;transition:all .15s}
 .btn-reset:hover{background:rgba(255,255,255,.15)}
@@ -123,7 +123,7 @@ body.mode-draft-paste .mode-tab.active{color:#1f7a45;border-bottom-color:#1f7a45
 
 <header>
   <h1>PLAYMART 出品下書きジェネレーター</h1>
-  <span>石川小松店</span>
+  <span id="header-store-name">石川小松店</span>
   <button class="btn-reset" onclick="resetAll()">↺ リセット</button>
 </header>
 
@@ -513,6 +513,7 @@ function getStoreKeyFromURL() {
 const CURRENT_STORE_KEY = getStoreKeyFromURL();
 const STORE = STORE_CONFIGS[CURRENT_STORE_KEY];
 if(STORE.hasSeino) document.getElementById('seino-carrier-label').classList.remove('hidden');
+document.getElementById('header-store-name').textContent = STORE.shortName || STORE.storeName;
 
 // ===== トップページ（パラメータなし時に店舗選択タイルを表示） =====
 (function initLandingPage() {
