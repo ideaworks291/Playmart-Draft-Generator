@@ -207,6 +207,21 @@ body.mode-draft-paste .mode-tab.active{color:#1f7a45;border-bottom-color:#1f7a45
       <label class="carrier-label"><input type="radio" name="guitar-type" value="acoustic" onchange="onGuitarTypeChange()"> アコースティック</label>
     </div>
   </div>
+  <div id="string-height-area" class="sub-section hidden" style="padding-bottom:12px;margin-bottom:12px;border-bottom:0.5px solid #eee">
+    <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:7px">
+      <input type="checkbox" id="string-height-chk" onchange="toggleStringHeight()"> 弦高を記載する
+    </label>
+    <div id="string-height-input-area" class="hidden" style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:11px;color:#888;margin-bottom:2px">1弦（高音側）mm</div>
+        <input type="text" id="string-height-1-input" placeholder="例：1.5" style="width:90px">
+      </div>
+      <div>
+        <div style="font-size:11px;color:#888;margin-bottom:2px">最低音弦（低音側）mm</div>
+        <input type="text" id="string-height-low-input" placeholder="例：2.0" style="width:90px">
+      </div>
+    </div>
+  </div>
   <div class="sub-section">
     <div class="sub-title">追加状態（複数選択可 → まとめて1行出力）</div>
     <div class="chk-group" id="app-chks"></div>
@@ -494,11 +509,12 @@ const STORE_CONFIGS = {
     closedDay: '日曜日',
     shippingArea: '大阪府',
     freqCityText: '大阪府門真市',
-    contactEmail: '@gmail.com', // ★仮設定：ローカル部分は担当者確認待ち。ドメインのみでも「受信許可設定」の文脈としては意味が破綻しないため暫定運用
+    contactEmail: 'hoshino@unisound.co.jp', // 担当者確認済み
     hasSeino: true, // 西濃運輸は大阪門真店限定の配送方法
     weightAsHeading: true, // 重量を「◆サイズ◆」内でなく独立した「◆重量◆」見出しで出力する（JITBOXの重量表記は対象外）
     showOnLandingPage: true, // トップページ（パラメータなし時）のタイルに表示するか
     shortName: '大阪門真店', // トップページのタイルに表示する短い店舗名
+    showStringHeightField: true, // ギターカテゴリで「弦高」入力欄を表示するか（大阪門真店の実テンプレートに存在する項目）
   },
 };
 // weightAsHeadingを明示していない店舗は既定でfalse（従来通りサイズ欄内に重量を表示）
@@ -809,6 +825,15 @@ function selCat(btn) {
   if(isGuitar) {
     guitarType = 'electric';
     document.querySelector('input[name="guitar-type"][value="electric"]').checked = true;
+  }
+  // 弦高入力欄：ギター選択時かつ店舗設定で有効な場合のみ表示
+  const showStringHeight = isGuitar && STORE.showStringHeightField;
+  document.getElementById('string-height-area').classList.toggle('hidden', !showStringHeight);
+  if(!showStringHeight) {
+    document.getElementById('string-height-chk').checked = false;
+    document.getElementById('string-height-input-area').classList.add('hidden');
+    document.getElementById('string-height-1-input').value = '';
+    document.getElementById('string-height-low-input').value = '';
   }
   // ギターは重量チェックをデフォルトON
   const weightChk = document.getElementById('weight-chk');
@@ -1180,6 +1205,10 @@ function toggleWeight() {
   toggleHiddenByChk('weight-chk', 'weight-input');
 }
 
+function toggleStringHeight() {
+  toggleHiddenByChk('string-height-chk', 'string-height-input-area');
+}
+
 function toggleNormalDims() {
   toggleHiddenByChk('normal-dims-chk', 'normal-dims-area');
 }
@@ -1369,6 +1398,15 @@ function generate() {
   const condition = document.querySelector('input[name=condition]:checked').value;
   const appItems = getChecked('ach');
   const appFrees = [...document.querySelectorAll('.app-free-input')].map(i=>normalizeFreeText(i.value.trim())).filter(Boolean);
+  // 弦高（ギターカテゴリ・店舗設定で有効な場合のみ）：チェックが入っていて値がある場合、外装の自由記入として追加
+  if(cat === 'guitar' && STORE.showStringHeightField && document.getElementById('string-height-chk').checked) {
+    const sh1 = document.getElementById('string-height-1-input').value.trim().replace(/[^0-9.]/g,'');
+    const shLow = document.getElementById('string-height-low-input').value.trim().replace(/[^0-9.]/g,'');
+    const shParts = [];
+    if(sh1) shParts.push(`1弦約${sh1}mm`);
+    if(shLow) shParts.push(`最低音弦約${shLow}mm`);
+    if(shParts.length) appFrees.push(`弦高：${shParts.join('・')}`);
+  }
   const opToggle = !document.getElementById('op-toggle').checked;
   const opBase = opToggle ? [...document.querySelectorAll('.op-base-chk:checked')].map(c=>c.value) : [];
   const opItems = opToggle ? getChecked('och') : [];
@@ -1911,6 +1949,10 @@ function resetAll() {
   document.getElementById('size-input').style.background = '';
   document.getElementById('size-input').placeholder = '例：140';
   document.getElementById('weight-input').value = '';
+  document.getElementById('string-height-chk').checked = false;
+  document.getElementById('string-height-input-area').classList.add('hidden');
+  document.getElementById('string-height-1-input').value = '';
+  document.getElementById('string-height-low-input').value = '';
   document.getElementById('normal-dims-chk').checked = false;
   document.getElementById('normal-dims-area').classList.add('hidden');
   document.getElementById('normal-dim-h').value = '';
@@ -2061,6 +2103,8 @@ function parsePastedMemo() {
     guitarType = (data['カテゴリ']||'').includes('アコースティック') ? 'acoustic' : 'electric';
     document.querySelector(`input[name="guitar-type"][value="${guitarType}"]`).checked = true;
   }
+  // 弦高入力欄の表示制御（値の復元は行わず、外装自由記入の1行としてそのまま復元される）
+  document.getElementById('string-height-area').classList.toggle('hidden', !(isGuitarCat && STORE.showStringHeightField));
 
   // ランク復元
   const rank = (data['商品ランク']||'C').trim();
