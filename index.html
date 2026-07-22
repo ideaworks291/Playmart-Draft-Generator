@@ -500,6 +500,7 @@ const STORE_CONFIGS = {
     contactEmail: 'xooew05075@yahoo.co.jp',
     showOnLandingPage: true, // トップページ（パラメータなし時）のタイルに表示するか
     shortName: '石川小松店', // トップページのタイルに表示する短い店舗名
+    showStringHeightField: true, // ギターカテゴリで「弦高」入力欄を表示するか
   },
   osaka: {
     storeName: 'PLAYMART 大阪門真店【日曜定休日】',
@@ -826,10 +827,13 @@ function selCat(btn) {
     guitarType = 'electric';
     document.querySelector('input[name="guitar-type"][value="electric"]').checked = true;
   }
-  // 弦高入力欄：ギター選択時かつ店舗設定で有効な場合のみ表示
+  // 弦高入力欄：ギター選択時かつ店舗設定で有効な場合のみ表示。表示時は既定でチェックON
   const showStringHeight = isGuitar && STORE.showStringHeightField;
   document.getElementById('string-height-area').classList.toggle('hidden', !showStringHeight);
-  if(!showStringHeight) {
+  if(showStringHeight) {
+    document.getElementById('string-height-chk').checked = true;
+    document.getElementById('string-height-input-area').classList.remove('hidden');
+  } else {
     document.getElementById('string-height-chk').checked = false;
     document.getElementById('string-height-input-area').classList.add('hidden');
     document.getElementById('string-height-1-input').value = '';
@@ -1403,9 +1407,9 @@ function generate() {
     const sh1 = document.getElementById('string-height-1-input').value.trim().replace(/[^0-9.]/g,'');
     const shLow = document.getElementById('string-height-low-input').value.trim().replace(/[^0-9.]/g,'');
     const shParts = [];
-    if(sh1) shParts.push(`1弦約${sh1}mm`);
-    if(shLow) shParts.push(`最低音弦約${shLow}mm`);
-    if(shParts.length) appFrees.push(`弦高：${shParts.join('・')}`);
+    if(sh1) shParts.push(`1弦 12フレット 約${sh1}mm`);
+    if(shLow) shParts.push(`最低音弦 12フレット 約${shLow}mm`);
+    if(shParts.length) appFrees.push(shParts.join(' / '));
   }
   const opToggle = !document.getElementById('op-toggle').checked;
   const opBase = opToggle ? [...document.querySelectorAll('.op-base-chk:checked')].map(c=>c.value) : [];
@@ -1949,8 +1953,8 @@ function resetAll() {
   document.getElementById('size-input').style.background = '';
   document.getElementById('size-input').placeholder = '例：140';
   document.getElementById('weight-input').value = '';
-  document.getElementById('string-height-chk').checked = false;
-  document.getElementById('string-height-input-area').classList.add('hidden');
+  document.getElementById('string-height-chk').checked = (currentCat === 'guitar' && STORE.showStringHeightField);
+  document.getElementById('string-height-input-area').classList.toggle('hidden', !(currentCat === 'guitar' && STORE.showStringHeightField));
   document.getElementById('string-height-1-input').value = '';
   document.getElementById('string-height-low-input').value = '';
   document.getElementById('normal-dims-chk').checked = false;
