@@ -1409,7 +1409,11 @@ function generate() {
     const shParts = [];
     if(sh1) shParts.push(`1弦 12フレット 約${sh1}mm`);
     if(shLow) shParts.push(`最低音弦 12フレット 約${shLow}mm`);
-    if(shParts.length) appFrees.push(shParts.join(' / '));
+    if(shParts.length) {
+      appFrees.push(shParts.join(' / '));
+      appFrees.push('レギュラーチューニングにて計測しております。');
+      appFrees.push('簡易計測となるため、若干の誤差がある可能性があります。');
+    }
   }
   const opToggle = !document.getElementById('op-toggle').checked;
   const opBase = opToggle ? [...document.querySelectorAll('.op-base-chk:checked')].map(c=>c.value) : [];
