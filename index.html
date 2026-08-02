@@ -1426,10 +1426,7 @@ function generate() {
     document.getElementById('cymbal-diameter-input').style.borderColor = '#c00';
     document.getElementById('cymbal-diameter-input').style.background = '#fff0f0';
     document.getElementById('cymbal-diameter-input').focus();
-    yahooHTML = '';
-    internalText = '';
-    internalTextCompact = '';
-    internalTextLegacy = '';
+    clearOutputsWithError('直径が未入力のため生成できませんでした。シンバルの直径（cm）を入力してから、もう一度生成してください。');
     return;
   }
   const cymbalDiameterNum = parseFloat(cymbalDiameterVal);
@@ -1449,10 +1446,7 @@ function generate() {
     document.getElementById('size-input').style.background = '#fff0f0';
     document.getElementById('size-input').placeholder = '※サイズを入力してください';
     document.getElementById('size-input').focus();
-    yahooHTML = '';
-    internalText = '';
-    internalTextCompact = '';
-    internalTextLegacy = '';
+    clearOutputsWithError(`サイズが未入力のため生成できませんでした。${carrier}のサイズを入力してから、もう一度生成してください。`);
     return;
   }
   const sizeFmt = sizeVal ? sizeVal.replace(/サイズ$/, '') + 'サイズ' : '';
@@ -1872,6 +1866,17 @@ ${ALL_STORES.map(s => `<FONT SIZE=2 COLOR=#333333><B><A HREF=${s.url} TARGET=new
   document.getElementById('out-yahoo').textContent = yahooHTML;
 }
 
+// 生成に失敗した（入力不備で中断した）場合、前回生成分の出力が画面に残り続けると
+// 「別の配送方法の内容が出てきた」という誤認を招くため、必ず出力欄ごとクリアする
+function clearOutputsWithError(msg) {
+  yahooHTML = '';
+  internalText = '';
+  internalTextCompact = '';
+  internalTextLegacy = '';
+  document.getElementById('out-yahoo').textContent = `⚠ ${msg}`;
+  document.getElementById('out-internal').textContent = `⚠ ${msg}`;
+}
+
 function copyToClipboard(text, btnId) {
   const btn = document.getElementById(btnId);
   const orig = btn.textContent;
@@ -2022,6 +2027,29 @@ function resetAll() {
 buildChks();
 document.getElementById('weight-chk').checked = false;
 document.getElementById('weight-input').classList.add('hidden');
+
+// ===== 読込時の状態同期 =====
+// ブラウザはリロードや「戻る」操作の際にラジオ／チェックボックスの選択状態を復元するが、
+// その際onchangeイベントは発火しないため、表示（どの入力欄が見えているか）と
+// 内部状態（実際にどれが選択されているか）が食い違うことがある。
+// 例：JITBOXが復元されているのに通常サイズ欄が表示され、作業者がそこへ入力してしまい、
+//     生成するとJITBOXの内容が出力される、という事故につながる。
+// これを防ぐため、読込時に選択状態を正としてUIを明示的に同期させる。
+function syncUIOnLoad() {
+  onCarrierChange();
+  updateCarrierColor();
+  toggleMulti();
+  toggleNormalDims();
+  toggleWeight();
+  toggleJitboxDouble();
+  toggleJitboxWeight();
+  toggleJitbox2Weight();
+  toggleDrumDiameter();
+  toggleBowSize();
+  toggleStringHeight();
+  toggleOpSection();
+}
+syncUIOnLoad();
 
 // ===== モード切替 =====
 let currentMode = 'check';
