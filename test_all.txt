@@ -1,0 +1,518 @@
+/**
+ * PLAYMART出品下書きジェネレーター 回帰テスト（統合版）
+ *
+ * これまでの開発で作成した個別テストファイルを1本にまとめたもの。
+ * 実行: node test_all.js
+ *
+ * 内容:
+ *   1. 全カテゴリ×全ランク×2店舗 生成スモークテスト
+ *   2. 重量の独立見出し（weightAsHeading）
+ *   3. トップページ（店舗選択タイル）
+ *   4. ヘッダーの店舗名動的表示
+ *   5. 弦高記載欄
+ *   6. 配送方法切替時の出力クリア（生成中断時の残留防止）
+ *   7. 読込時のUI状態同期（ブラウザのフォーム復元対策）
+ *   8. 店舗キー・メモ形式のバリデーション／ギター種別リセット
+ *   9. 数値範囲チェック／他店舗配送方法の復元拒否／カテゴリ変更時の自由記入欄リセット
+ *   10. 動作項目（排他選択グループ）の貼付復元バグ修正
+ */
+
+const fs = require('fs');
+const path = require('path');
+const { JSDOM } = require('jsdom');
+
+const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf-8');
+
+// ===== 共通ヘルパー =====
+async function setup(store) {
+  const url = store === null || store === undefined
+    ? 'https://example.test/'
+    : `https://example.test/?store=${store}`;
+  const dom = new JSDOM(html, { url, runScripts: 'dangerously', resources: 'usable' });
+  await new Promise(res => dom.window.addEventListener('load', res));
+  return dom;
+}
+function cat(dom, v) { dom.window.selCat(dom.window.document.querySelector(`.cat-btn[data-v="${v}"]`)); }
+function rank(dom, v) { dom.window.selRank(dom.window.document.querySelector(`.btn.rank-${v}, .btn-rare.rank-${v}`)); }
+function setCarrier(dom, value) {
+  const { document } = dom.window;
+  document.querySelectorAll('input[name=carrier]').forEach(r => { r.checked = false; });
+  document.querySelector(`input[name=carrier][value="${value}"]`).checked = true;
+  dom.window.onCarrierChange();
+}
+function makeMemo(dom, setupFn) {
+  const { document } = dom.window;
+  setupFn(dom);
+  dom.window.generate();
+  return document.getElementById('out-internal').textContent;
+}
+
+let PASS = 0, FAIL = 0;
+function ok(cond, label) {
+  if (cond) { PASS++; console.log(`  OK: ${label}`); }
+  else { FAIL++; console.error(`  NG: ${label}`); }
+}
+function section(title) { console.log(`\n===== ${title} =====`); }
+
+
+(async () => {
+
+  // ========================================================================
+  section('1. 全カテゴリ×全ランク×2店舗 生成スモークテスト');
+  // ========================================================================
+  {
+    const CATS = ['audio','speaker','turntable','cartridge','tube','guitar','effector','guitaramp',
+                  'wind','violin','keyboard','drum','cymbal','percussion','camera','other'];
+    const RANKS = ['A','B','C','D','G','J'];
+
+    for (const store of [null, 'osaka']) {
+      const dom = await setup(store);
+      const { document } = dom.window;
+      let storeOk = true;
+
+      for (const c of CATS) {
+        for (const r of RANKS) {
+          cat(dom, c);
+          rank(dom, r);
+          if (c === 'cymbal') document.getElementById('cymbal-diameter-input').value = '14';
+          document.getElementById('size-input').value = '140';
+          setCarrier(dom, 'ゆうパック');
+
+          try {
+            dom.window.generate();
+          } catch (e) {
+            console.error(`    例外: ${c}/${r}: ${e.message}`); storeOk = false; continue;
+          }
+          const out = document.getElementById('out-yahoo').textContent;
+          if (!out || out.includes('⚠')) { console.error(`    出力不正: ${c}/${r}`); storeOk = false; continue; }
+          if (/undefined|NaN/.test(out)) { console.error(`    undefined/NaN混入: ${c}/${r}`); storeOk = false; }
+
+          // 動作の排他グループで二重チェックが起きていないか
+          const checkedBase = [...document.querySelectorAll('.op-base-chk:checked')];
+          const isExclusiveGroup = checkedBase.length > 0 && checkedBase[0].hasAttribute('onchange');
+          if (isExclusiveGroup && checkedBase.length > 1) {
+            console.error(`    排他グループ二重チェック: ${c}/${r}: ${checkedBase.map(x=>x.value)}`); storeOk = false;
+          }
+        }
+      }
+      ok(storeOk, `store=${store || '(なし)'}: 全16カテゴリ×全6ランクが正常に生成される`);
+    }
+  }
+
+  // ========================================================================
+  section('2. 重量の独立見出し（weightAsHeading）');
+  // ========================================================================
+  {
+    // ishikawa: サイズ欄内に1行として表示
+    {
+      const dom = await setup('ishikawa');
+      const { document } = dom.window;
+      cat(dom, 'audio');
+      document.getElementById('size-input').value = '140';
+      document.getElementById('weight-chk').checked = true;
+      dom.window.toggleWeight();
+      document.getElementById('weight-input').value = '2.4';
+      dom.window.generate();
+      const out = document.getElementById('out-yahoo').textContent;
+      const hasHeading = out.includes('重量</FONT>');
+      const weightCount = (out.match(/【重量：約2\.4kg】/g) || []).length;
+      ok(!hasHeading && weightCount === 1, 'ishikawa: 重量は◆サイズ◆内に1行、独立見出しなし');
+    }
+    // osaka: 独立見出し「◆重量◆」
+    {
+      const dom = await setup('osaka');
+      const { document } = dom.window;
+      cat(dom, 'audio');
+      document.getElementById('size-input').value = '140';
+      document.getElementById('weight-chk').checked = true;
+      dom.window.toggleWeight();
+      document.getElementById('weight-input').value = '2.4';
+      dom.window.generate();
+      const out = document.getElementById('out-yahoo').textContent;
+      const idxSize = out.indexOf('サイズ</FONT>');
+      const idxWeight = out.indexOf('重量</FONT>');
+      const idxAcc = out.indexOf('付属品</FONT>');
+      const orderOk = idxSize > -1 && idxWeight > idxSize && idxAcc > idxWeight;
+      const sizeSection = out.slice(idxSize, idxWeight);
+      ok(orderOk && !sizeSection.includes('重量：'), 'osaka: 重量が独立した◆重量◆見出しとして、サイズ→重量→付属品の順で出力される');
+    }
+    // osaka + JITBOX: 独立見出しの対象外（現状通りJITBOX欄内）
+    {
+      const dom = await setup('osaka');
+      const { document } = dom.window;
+      cat(dom, 'audio');
+      setCarrier(dom, 'JITBOX');
+      document.getElementById('jitbox-h').value = '50';
+      document.getElementById('jitbox-weight-chk').checked = true;
+      dom.window.toggleJitboxWeight();
+      document.getElementById('jitbox-weight-input').value = '5';
+      dom.window.generate();
+      const out = document.getElementById('out-yahoo').textContent;
+      ok(!out.includes('重量</FONT>') && out.includes('【重量：約5kg】'), 'osaka+JITBOX: 独立見出しにならず、JITBOX欄内表記のまま');
+    }
+    // osaka + 直接引取のみ: 重量欄自体が出ない
+    {
+      const dom = await setup('osaka');
+      const { document } = dom.window;
+      cat(dom, 'audio');
+      setCarrier(dom, '直接引取のみ');
+      dom.window.generate();
+      const out = document.getElementById('out-yahoo').textContent;
+      ok(!out.includes('重量</FONT>'), 'osaka+直接引取のみ: 重量見出しが出ない');
+    }
+    // osaka: 重量チェックOFF（標準OFF）なら見出しごと非表示
+    {
+      const dom = await setup('osaka');
+      const { document } = dom.window;
+      cat(dom, 'audio');
+      document.getElementById('size-input').value = '140';
+      dom.window.generate();
+      const out = document.getElementById('out-yahoo').textContent;
+      ok(!out.includes('重量</FONT>'), 'osaka: 重量チェックOFFなら見出しごと非表示（標準OFF）');
+    }
+  }
+
+  // ========================================================================
+  section('3. トップページ（店舗選択タイル）');
+  // ========================================================================
+  {
+    const dom = await setup(null);
+    const { document } = dom.window;
+    const overlay = document.getElementById('landing-overlay');
+    const tiles = [...document.querySelectorAll('.landing-tile')].map(b => b.textContent);
+    ok(overlay.style.display === 'flex', 'パラメータなし: トップページのオーバーレイが表示される');
+    ok(tiles.length === 2 && tiles.includes('石川小松店') && tiles.includes('大阪門真店'),
+      'パラメータなし: タイルが石川小松店・大阪門真店の2つ');
+    ok([...document.querySelectorAll('.landing-tile')].every(b => typeof b.onclick === 'function'),
+      'タイルにonclickハンドラが設定されている');
+  }
+  {
+    const domI = await setup('ishikawa');
+    const domO = await setup('osaka');
+    ok(domI.window.document.getElementById('landing-overlay').style.display !== 'flex',
+      '?store=ishikawa: トップページが出ず直接ツールが開く');
+    ok(domO.window.document.getElementById('landing-overlay').style.display !== 'flex',
+      '?store=osaka: トップページが出ず直接ツールが開く');
+  }
+  {
+    // 未登録キー・表記ゆれ
+    const domBad = await setup('fukuoka');
+    const warn = domBad.window.document.getElementById('landing-warning');
+    ok(domBad.window.document.getElementById('landing-overlay').style.display === 'flex' && !warn.classList.contains('hidden'),
+      '未登録キー(fukuoka): トップページ＋警告表示');
+    const domUpper = await setup('Osaka');
+    ok(domUpper.window.document.getElementById('header-store-name').textContent === '大阪門真店',
+      '表記ゆれ(Osaka大文字): 大阪門真店として認識される');
+  }
+
+  // ========================================================================
+  section('4. ヘッダーの店舗名動的表示');
+  // ========================================================================
+  {
+    const domI = await setup('ishikawa');
+    const domO = await setup('osaka');
+    ok(domI.window.document.getElementById('header-store-name').textContent === '石川小松店', 'ishikawa: ヘッダーに石川小松店');
+    ok(domO.window.document.getElementById('header-store-name').textContent === '大阪門真店', 'osaka: ヘッダーに大阪門真店（ハードコード修正済み）');
+  }
+
+  // ========================================================================
+  section('5. 弦高記載欄');
+  // ========================================================================
+  {
+    // 両店舗で表示され、ギター選択時は標準ON
+    for (const store of ['ishikawa', 'osaka']) {
+      const dom = await setup(store);
+      const { document } = dom.window;
+      cat(dom, 'guitar');
+      const area = document.getElementById('string-height-area');
+      const chk = document.getElementById('string-height-chk');
+      ok(!area.classList.contains('hidden') && chk.checked, `${store}: ギター選択で弦高欄が表示され標準ON`);
+    }
+    // 出力フォーマットと固定注記2行
+    {
+      const dom = await setup('osaka');
+      const { document } = dom.window;
+      cat(dom, 'guitar');
+      document.getElementById('string-height-1-input').value = '1.5';
+      document.getElementById('string-height-low-input').value = '2.0';
+      document.getElementById('size-input').value = '140';
+      dom.window.generate();
+      const out = document.getElementById('out-yahoo').textContent;
+      ok(out.includes('1弦 12フレット 約1.5mm / 最低音弦 12フレット 約2.0mm'), '弦高の出力フォーマットが正しい');
+      ok(out.includes('レギュラーチューニングにて計測しております。') && out.includes('簡易計測となるため、若干の誤差がある可能性があります。'),
+        '弦高記載時に固定注記2行が追加される');
+    }
+    // チェックを外すと行ごと非表示
+    {
+      const dom = await setup('osaka');
+      const { document } = dom.window;
+      cat(dom, 'guitar');
+      document.getElementById('string-height-chk').checked = false;
+      dom.window.toggleStringHeight();
+      document.getElementById('string-height-1-input').value = '1.5';
+      document.getElementById('size-input').value = '140';
+      dom.window.generate();
+      const out = document.getElementById('out-yahoo').textContent;
+      ok(!out.includes('12フレット'), 'チェックを外すと弦高の行が出力されない');
+    }
+    // 貼付復元での往復
+    {
+      const dom = await setup('osaka');
+      const memo = makeMemo(dom, d => {
+        cat(d, 'guitar');
+        d.window.document.getElementById('string-height-1-input').value = '1.5';
+        d.window.document.getElementById('string-height-low-input').value = '2.0';
+        d.window.document.getElementById('size-input').value = '140';
+      });
+      const dom2 = await setup('osaka');
+      const { document } = dom2.window;
+      document.getElementById('paste-input').value = memo;
+      dom2.window.parsePastedMemo();
+      const freeInputs = [...document.querySelectorAll('.app-free-input')].map(i => i.value);
+      ok(freeInputs.some(v => v.includes('1弦 12フレット 約1.5mm')), '弦高情報が貼付復元でも自由記入欄として正しく戻る');
+    }
+  }
+
+  // ========================================================================
+  section('6. 配送方法切替時の出力クリア（生成中断時の残留防止）');
+  // ========================================================================
+  {
+    // JITBOXで生成→ゆうパックに切替→サイズ未入力で生成→前回出力が残らない
+    const dom = await setup('ishikawa');
+    const { document } = dom.window;
+    setCarrier(dom, 'JITBOX');
+    document.getElementById('jitbox-h').value = '500';
+    document.getElementById('jitbox-w').value = '400';
+    document.getElementById('jitbox-d').value = '300';
+    dom.window.generate();
+    const out1 = document.getElementById('out-yahoo').textContent;
+    ok(out1.includes('JITBOX'), '（前提）JITBOXで正常生成できる');
+
+    setCarrier(dom, 'ゆうパック');
+    dom.window.generate(); // サイズ未入力のため失敗するはず
+    const out2 = document.getElementById('out-yahoo').textContent;
+    ok(!out2.includes('JITBOX') && out2.includes('⚠'), 'サイズ未入力で生成失敗時、前回のJITBOX出力が残らずエラー表示される');
+
+    document.getElementById('size-input').value = '140';
+    dom.window.generate();
+    const out3 = document.getElementById('out-yahoo').textContent;
+    ok(!out3.includes('JITBOX') && out3.includes('ゆうパック・140サイズ'), 'サイズ入力後は正しくゆうパックの内容で生成される');
+  }
+  {
+    // 全配送方法で他方式の文言が混入しないか
+    const dom = await setup('osaka');
+    const { document } = dom.window;
+    const cases = [
+      ['ゆうパック', 'ゆうパック・140サイズ'],
+      ['佐川急便', '佐川急便・140サイズ'],
+      ['ヤマト運輸', 'ヤマト運輸・140サイズ'],
+      ['西濃運輸', '西濃運輸・140サイズ'],
+      ['直接引取のみ', '当方倉庫での直接引取のみ'],
+    ];
+    let allOk = true;
+    for (const [carrier, expect] of cases) {
+      setCarrier(dom, carrier);
+      document.getElementById('size-input').value = '140';
+      dom.window.generate();
+      const out = document.getElementById('out-yahoo').textContent;
+      if (!out.includes(expect)) allOk = false;
+    }
+    ok(allOk, '全5配送方法で正しい内容が生成される（混同なし）');
+  }
+
+  // ========================================================================
+  section('7. 読込時のUI状態同期（ブラウザのフォーム復元対策）');
+  // ========================================================================
+  {
+    const dom = await setup('ishikawa');
+    const { document } = dom.window;
+    // ブラウザのフォーム復元を模した状況（onchangeが発火しない状態）
+    document.querySelector('input[name=carrier][value="ゆうパック"]').checked = false;
+    document.querySelector('input[name=carrier][value="JITBOX"]').checked = true;
+    dom.window.syncUIOnLoad();
+    const normalVisible = !document.getElementById('size-normal-area').classList.contains('hidden');
+    const jitboxVisible = !document.getElementById('size-jitbox-area').classList.contains('hidden');
+    ok(!normalVisible && jitboxVisible, '復元されたJITBOX選択に、読込時の同期処理でUIが追従する');
+
+    document.getElementById('jitbox-h').value = '500';
+    document.getElementById('jitbox-w').value = '400';
+    document.getElementById('jitbox-d').value = '300';
+    dom.window.generate();
+    const out = document.getElementById('out-yahoo').textContent;
+    ok(out.includes('JITBOX'), '同期後は見えている入力欄と生成結果が一致する');
+  }
+
+  // ========================================================================
+  section('8. 店舗キー・メモ形式のバリデーション／ギター種別リセット');
+  // ========================================================================
+  {
+    // 無関係なテキストは解析失敗として扱う
+    const dom = await setup('ishikawa');
+    const { document } = dom.window;
+    document.getElementById('paste-input').value = '今日はいい天気ですね。';
+    const result = dom.window.parsePastedMemo();
+    ok(result !== true, '無関係なテキストは自社記録メモとして解析されない');
+  }
+  {
+    // 正規のメモは警告なしで解析できる
+    const dom = await setup('ishikawa');
+    const memo = makeMemo(dom, d => {
+      cat(d, 'audio');
+      d.window.document.getElementById('size-input').value = '140';
+    });
+    const dom2 = await setup('ishikawa');
+    const { document } = dom2.window;
+    document.getElementById('paste-input').value = memo;
+    const result = dom2.window.parsePastedMemo();
+    const msg = document.getElementById('parse-result').textContent;
+    ok(result === true && !msg.includes('※'), '正規のメモは警告なしで解析できる');
+  }
+  {
+    // 「次の商品へ」でギター種別がエレキにリセットされる
+    const dom = await setup('osaka');
+    const { document } = dom.window;
+    cat(dom, 'guitar');
+    document.querySelector('input[name="guitar-type"][value="acoustic"]').checked = true;
+    dom.window.onGuitarTypeChange();
+    dom.window.resetAll();
+    ok(document.querySelector('input[name="guitar-type"]:checked').value === 'electric',
+      '「次の商品へ」でギター種別がエレキにリセットされる');
+  }
+
+  // ========================================================================
+  section('9. 数値範囲／他店舗配送方法の拒否／カテゴリ変更時のリセット');
+  // ========================================================================
+  {
+    const dom = await setup('ishikawa');
+    const { document } = dom.window;
+    cat(dom, 'audio');
+    document.getElementById('size-input').value = '0';
+    dom.window.generate();
+    const out1 = document.getElementById('out-yahoo').textContent;
+    ok(out1.includes('⚠'), 'サイズ範囲外(0)は生成が中断される');
+
+    document.getElementById('size-input').value = '140';
+    dom.window.generate();
+    const out2 = document.getElementById('out-yahoo').textContent;
+    ok(!out2.includes('⚠') && out2.includes('140サイズ'), '正常なサイズ(140)は生成できる');
+  }
+  {
+    const dom = await setup('ishikawa');
+    const { document } = dom.window;
+    cat(dom, 'cymbal');
+    document.getElementById('size-input').value = '80';
+    document.getElementById('cymbal-diameter-input').value = '0';
+    dom.window.generate();
+    ok(document.getElementById('out-yahoo').textContent.includes('⚠'), 'シンバル直径0cmは生成が中断される');
+  }
+  {
+    // 他店舗専用配送方法（西濃運輸）は貼付復元時に弾かれる
+    const domOsaka = await setup('osaka');
+    const memo = makeMemo(domOsaka, d => {
+      cat(d, 'audio');
+      setCarrier(d, '西濃運輸');
+      d.window.document.getElementById('size-input').value = '140';
+    });
+    const domIshikawa = await setup('ishikawa');
+    const { document } = domIshikawa.window;
+    document.getElementById('paste-input').value = memo;
+    domIshikawa.window.parsePastedMemo();
+    const checked = document.querySelector('input[name=carrier]:checked').value;
+    domIshikawa.window.generate();
+    const out = document.getElementById('out-yahoo').textContent;
+    ok(checked !== '西濃運輸' && !out.includes('西濃運輸'), '石川小松店で他店専用(西濃運輸)のメモは弾かれゆうパックに置換される');
+
+    // 大阪門真店同士なら西濃運輸のまま復元される
+    const domOsaka2 = await setup('osaka');
+    const { document: d2 } = domOsaka2.window;
+    d2.getElementById('paste-input').value = memo;
+    domOsaka2.window.parsePastedMemo();
+    ok(d2.querySelector('input[name=carrier]:checked').value === '西濃運輸', '大阪門真店同士では西濃運輸がそのまま復元される');
+  }
+  {
+    // カテゴリ変更で自由記入欄が全リセット
+    const dom = await setup('osaka');
+    const { document } = dom.window;
+    cat(dom, 'guitar');
+    document.querySelector('.app-free-input').value = 'ネックに反りあり';
+    document.querySelector('.op-free-input').value = 'ノイズが出ることがある';
+    cat(dom, 'audio');
+    ok(!document.querySelector('.app-free-input').value && !document.querySelector('.op-free-input').value,
+      'カテゴリ変更で外装・動作の自由記入欄が両方ともクリアされる');
+
+    // 同じカテゴリの再選択では保持される
+    const dom2 = await setup('osaka');
+    const { document: d2 } = dom2.window;
+    cat(dom2, 'audio');
+    d2.querySelector('.app-free-input').value = '外装に汚れあり';
+    cat(dom2, 'audio');
+    ok(d2.querySelector('.app-free-input').value === '外装に汚れあり', '同じカテゴリの再選択では自由記入欄は保持される');
+  }
+
+  // ========================================================================
+  section('10. 動作項目（排他選択グループ）の貼付復元バグ修正');
+  // ========================================================================
+  {
+    // Cランク・オーディオで「通電確認済です。」のみ選択→復元しても二重チェックにならない
+    const dom = await setup('ishikawa');
+    const memo = makeMemo(dom, d => {
+      cat(d, 'audio');
+      const { document } = d.window;
+      document.querySelectorAll('.op-base-chk').forEach(c => c.checked = false);
+      document.querySelector('.op-base-chk[value="通電確認済です。"]').checked = true;
+      document.getElementById('size-input').value = '60';
+      setCarrier(d, 'ゆうパック');
+    });
+    const dom2 = await setup('ishikawa');
+    const { document } = dom2.window;
+    document.getElementById('paste-input').value = memo;
+    dom2.window.parsePastedMemo();
+    const checked = [...document.querySelectorAll('.op-base-chk:checked')].map(c => c.value);
+    dom2.window.generate();
+    const out = document.getElementById('out-yahoo').textContent;
+    ok(checked.length === 1 && checked[0] === '通電確認済です。' && !out.includes('出音確認済です。'),
+      'Cランク: 貼付復元で「出音確認済」がデフォルト残留せず正しく1項目のみ復元される（現場報告の再現ケース）');
+  }
+  {
+    // Gランク（複数選択可）は従来通り複数チェックが復元される
+    const dom = await setup('ishikawa');
+    const memo = makeMemo(dom, d => {
+      cat(d, 'audio');
+      rank(d, 'G');
+      const { document } = d.window;
+      document.querySelector('.op-base-chk[value="通電確認済です。"]').checked = true;
+      document.querySelector('.op-base-chk[value="出音確認済です。"]').checked = true;
+      document.getElementById('size-input').value = '60';
+      setCarrier(d, 'ゆうパック');
+    });
+    const dom2 = await setup('ishikawa');
+    const { document } = dom2.window;
+    document.getElementById('paste-input').value = memo;
+    dom2.window.parsePastedMemo();
+    const checked = [...document.querySelectorAll('.op-base-chk:checked')].map(c => c.value);
+    ok(checked.length === 2, 'Gランク（複数選択可）は従来通り複数チェックが復元される');
+  }
+  {
+    // 鍵盤楽器（複数選択可）も同様
+    const dom = await setup('ishikawa');
+    const memo = makeMemo(dom, d => {
+      cat(d, 'keyboard');
+      const { document } = d.window;
+      document.querySelectorAll('.op-base-chk').forEach(c => c.checked = false);
+      document.querySelector('.op-base-chk[value="通電確認済です。"]').checked = true;
+      document.querySelector('.op-base-chk[value="出音確認済です。"]').checked = true;
+      document.getElementById('size-input').value = '60';
+      setCarrier(d, 'ゆうパック');
+    });
+    const dom2 = await setup('ishikawa');
+    const { document } = dom2.window;
+    document.getElementById('paste-input').value = memo;
+    dom2.window.parsePastedMemo();
+    const checked = [...document.querySelectorAll('.op-base-chk:checked')].map(c => c.value);
+    ok(checked.length === 2, '鍵盤楽器（複数選択可）も従来通り複数チェックが復元される');
+  }
+
+  // ========================================================================
+  console.log(`\n\n========== 結果: ${PASS} PASS / ${FAIL} FAIL ==========`);
+  process.exit(FAIL === 0 ? 0 : 1);
+})();
