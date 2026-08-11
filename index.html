@@ -13,6 +13,7 @@ body.mode-check{background:#cfe2f7}
 body.mode-draft-input{background:#f7d5d5}
 body.mode-draft-paste{background:#d2f2dc}
 header{background:#951327;color:#fff;padding:12px 20px;display:flex;align-items:center;gap:10px;transition:background .3s;position:relative}
+#sticky-top{position:sticky;top:0;z-index:1000;box-shadow:0 2px 6px rgba(0,0,0,.12)}
 body.mode-check header{background:#2c5f99}
 body.mode-draft-input header{background:#951327}
 body.mode-draft-paste header{background:#1f7a45}
@@ -114,6 +115,7 @@ body.mode-draft-paste .mode-tab.active{color:#1f7a45;border-bottom-color:#1f7a45
   <div class="landing-inner">
     <div class="landing-title">PLAYMART出品下書きジェネレーター</div>
     <div class="landing-subtitle">店舗を選択してください</div>
+    <div id="landing-warning" class="hidden" style="max-width:520px;margin:0 auto 28px;padding:10px 14px;background:#FDEBEA;border-left:4px solid #C0392B;color:#922B21;font-size:13px;text-align:left;border-radius:4px"></div>
     <div id="landing-tiles"></div>
   </div>
 </div>
@@ -121,6 +123,7 @@ body.mode-draft-paste .mode-tab.active{color:#1f7a45;border-bottom-color:#1f7a45
 
 <button class="float-reset" onclick="resetAll();window.scrollTo({top:0,behavior:'smooth'})">↺ 次の商品へ</button>
 
+<div id="sticky-top">
 <header>
   <h1>PLAYMART 出品下書きジェネレーター</h1>
   <span id="header-store-name">石川小松店</span>
@@ -131,6 +134,7 @@ body.mode-draft-paste .mode-tab.active{color:#1f7a45;border-bottom-color:#1f7a45
   <button class="mode-tab active" data-mode="check" onclick="selMode(this)">① 動作確認モード</button>
   <button class="mode-tab" data-mode="draft-input" onclick="selMode(this)">② ヤフオク下書き（入力から）</button>
   <button class="mode-tab" data-mode="draft-paste" onclick="selMode(this)">③ ヤフオク下書き（メモ貼付）</button>
+</div>
 </div>
 
 <div id="paste-mode-area" class="container hidden">
@@ -521,24 +525,46 @@ const STORE_CONFIGS = {
 // weightAsHeadingを明示していない店舗は既定でfalse（従来通りサイズ欄内に重量を表示）
 // showOnLandingPageをfalseにする、または省略すると、準備中の店舗をトップページのタイルから除外できる
 
+// URLの?store=から店舗キーを取得する。
+// 大文字・前後の空白といった表記ゆれは吸収する（?store=Osaka でも大阪門真店として扱う）。
+// 未登録のキー（打ち間違い・未対応店舗）が指定された場合はnullを返し、
+// 勝手に石川小松店として動作せず、店舗選択のトップページを表示させる。
+// ※ここで黙って既定店舗にフォールバックすると、他店の住所・電話・連絡先メールのまま
+//   出品してしまう事故につながるため、意図的にnullを返している。
 function getStoreKeyFromURL() {
   const params = new URLSearchParams(window.location.search);
-  const key = params.get('store');
-  return (key && STORE_CONFIGS[key]) ? key : 'ishikawa';
+  const raw = params.get('store');
+  if(!raw) return null; // パラメータなし → トップページ
+  const key = raw.trim().toLowerCase();
+  return STORE_CONFIGS[key] ? key : null; // 未登録キー → トップページ
 }
 
-const CURRENT_STORE_KEY = getStoreKeyFromURL();
+const RESOLVED_STORE_KEY = getStoreKeyFromURL();
+// 店舗が確定できない場合もスクリプト全体は動作させる必要があるため、
+// 内部的には石川小松店の設定を使うが、画面にはトップページを出して操作させない。
+const CURRENT_STORE_KEY = RESOLVED_STORE_KEY || 'ishikawa';
 const STORE = STORE_CONFIGS[CURRENT_STORE_KEY];
 if(STORE.hasSeino) document.getElementById('seino-carrier-label').classList.remove('hidden');
 document.getElementById('header-store-name').textContent = STORE.shortName || STORE.storeName;
 
-// ===== トップページ（パラメータなし時に店舗選択タイルを表示） =====
+// ===== トップページ（店舗が確定できない場合に店舗選択タイルを表示） =====
 (function initLandingPage() {
-  const hasStoreParam = !!new URLSearchParams(window.location.search).get('store');
-  if (hasStoreParam) return; // ?store=xxx が指定されている場合は通常通りツールを表示
+  // RESOLVED_STORE_KEY が null＝「?store=なし」または「未登録キーの指定」
+  if (RESOLVED_STORE_KEY) return; // 店舗が確定している場合は通常通りツールを表示
   const overlay = document.getElementById('landing-overlay');
   const tilesEl = document.getElementById('landing-tiles');
   if (!overlay || !tilesEl) return;
+
+  // 打ち間違い等で未登録のキーが指定された場合は、その旨を明示する
+  const raw = new URLSearchParams(window.location.search).get('store');
+  if (raw) {
+    const warn = document.getElementById('landing-warning');
+    if (warn) {
+      warn.textContent = `「${raw}」は登録されていない店舗です。下から店舗を選び直してください。`;
+      warn.classList.remove('hidden');
+    }
+  }
+
   Object.keys(STORE_CONFIGS)
     .filter(key => STORE_CONFIGS[key].showOnLandingPage)
     .forEach(key => {
@@ -817,9 +843,25 @@ function onGuitarTypeChange() {
 }
 
 function selCat(btn) {
+  const prevCat = currentCat;
   document.querySelectorAll('#cat-group .cat-btn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   currentCat = btn.dataset.v;
+
+  // カテゴリを実際に変更した場合、外観・動作の自由記入欄は全リセットする。
+  // 別カテゴリ向けに書いた自由記入（例：ギターの「ネックに反りあり」）が
+  // 次のカテゴリの商品にそのまま残ってしまう事故を防ぐため。
+  if(prevCat !== currentCat) {
+    ['app-free-list','op-free-list'].forEach(id => {
+      const list = document.getElementById(id);
+      if(!list) return;
+      [...list.querySelectorAll('.free-row')].forEach((row,i) => {
+        if(i === 0) row.querySelector('input').value = '';
+        else row.remove();
+      });
+    });
+  }
+
   // ギター選択時：エレキ／アコースティック切替エリアを表示し、エレキをデフォルトに
   const isGuitar = currentCat === 'guitar';
   document.getElementById('guitar-type-area').classList.toggle('hidden', !isGuitar);
@@ -879,6 +921,12 @@ function selCat(btn) {
   toggleOpSection();
   buildChks();
 }
+
+// ===== 入力値の妥当範囲（明らかな入力ミスの検出用） =====
+// 範囲外はエラーとして生成を中断する。実際の運用に合わせて随時調整可能。
+const SIZE_MIN = 40, SIZE_MAX = 260; // ゆうパック/佐川急便/ヤマト運輸/西濃運輸のサイズ（cm、単一指定時のみ対象）
+const WEIGHT_MIN = 0.1, WEIGHT_MAX = 100; // 重量（kg）
+const DIAMETER_MIN = 10, DIAMETER_MAX = 70; // シンバル・ドラムの直径（cm）。標準インチ表（6〜26インチ＝約15〜66cm）に余裕を持たせた範囲
 
 const STANDARD_CYMBAL_INCHES = [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26];
 
@@ -1429,10 +1477,30 @@ function generate() {
     clearOutputsWithError('直径が未入力のため生成できませんでした。シンバルの直径（cm）を入力してから、もう一度生成してください。');
     return;
   }
+  if(cat === 'cymbal' && cymbalDiameterVal) {
+    const n = parseFloat(cymbalDiameterVal);
+    if(isNaN(n) || n < DIAMETER_MIN || n > DIAMETER_MAX) {
+      document.getElementById('cymbal-diameter-input').style.borderColor = '#c00';
+      document.getElementById('cymbal-diameter-input').style.background = '#fff0f0';
+      document.getElementById('cymbal-diameter-input').focus();
+      clearOutputsWithError(`直径の値「${cymbalDiameterVal}cm」が不正です。${DIAMETER_MIN}〜${DIAMETER_MAX}cmの範囲で入力してください。`);
+      return;
+    }
+  }
   const cymbalDiameterNum = parseFloat(cymbalDiameterVal);
   const cymbalDiameterFmt = (cat === 'cymbal' && !isNaN(cymbalDiameterNum)) ? `${nearestCymbalInch(cymbalDiameterNum)}インチ／${cymbalDiameterNum}cm` : '';
   const drumDiameterChk = document.getElementById('drum-diameter-chk').checked;
   const drumDiameterVal = document.getElementById('drum-diameter-input').value.trim();
+  if(cat === 'drum' && drumDiameterChk && drumDiameterVal) {
+    const n = parseFloat(drumDiameterVal);
+    if(isNaN(n) || n < DIAMETER_MIN || n > DIAMETER_MAX) {
+      document.getElementById('drum-diameter-input').style.borderColor = '#c00';
+      document.getElementById('drum-diameter-input').style.background = '#fff0f0';
+      document.getElementById('drum-diameter-input').focus();
+      clearOutputsWithError(`直径の値「${drumDiameterVal}cm」が不正です。${DIAMETER_MIN}〜${DIAMETER_MAX}cmの範囲で入力してください。`);
+      return;
+    }
+  }
   const drumDiameterNum = parseFloat(drumDiameterVal);
   const drumDiameterFmt = (cat === 'drum' && drumDiameterChk && !isNaN(drumDiameterNum)) ? `${nearestDrumInch(drumDiameterNum)}インチ／${drumDiameterNum}cm` : '';
   const violinSizeFmt = (cat === 'violin') ? document.getElementById('violin-size-select').value : '';
@@ -1449,9 +1517,30 @@ function generate() {
     clearOutputsWithError(`サイズが未入力のため生成できませんでした。${carrier}のサイズを入力してから、もう一度生成してください。`);
     return;
   }
+  // サイズの範囲チェック（明らかな入力ミスの検出）。単一サイズ指定時のみ対象（複数個口は対象外）。
+  if((carrier === 'ゆうパック' || carrier === '佐川急便' || carrier === 'ヤマト運輸' || carrier === '西濃運輸') && sizeVal && !(multiChkEarly && multiValEarly)) {
+    const sizeNum = parseFloat(sizeVal);
+    if(isNaN(sizeNum) || sizeNum < SIZE_MIN || sizeNum > SIZE_MAX) {
+      document.getElementById('size-input').style.borderColor = '#c00';
+      document.getElementById('size-input').style.background = '#fff0f0';
+      document.getElementById('size-input').focus();
+      clearOutputsWithError(`サイズの値「${sizeVal}」が不正です。${SIZE_MIN}〜${SIZE_MAX}の範囲で数値を入力してください。`);
+      return;
+    }
+  }
   const sizeFmt = sizeVal ? sizeVal.replace(/サイズ$/, '') + 'サイズ' : '';
   const weightChk = cat !== 'cymbal' && document.getElementById('weight-chk').checked;
   const weightVal = document.getElementById('weight-input').value.trim();
+  if(weightChk && weightVal) {
+    const n = parseFloat(weightVal.replace(/[^0-9.\-]/g,''));
+    if(isNaN(n) || n < WEIGHT_MIN || n > WEIGHT_MAX) {
+      document.getElementById('weight-input').style.borderColor = '#c00';
+      document.getElementById('weight-input').style.background = '#fff0f0';
+      document.getElementById('weight-input').focus();
+      clearOutputsWithError(`重量の値「${weightVal}kg」が不正です。${WEIGHT_MIN}〜${WEIGHT_MAX}kgの範囲で入力してください。`);
+      return;
+    }
+  }
   const weightFmt = weightVal ? `約${weightVal.replace(/[^0-9.]/g,'')}kg` : '';
   const multiChk = document.getElementById('multi-chk').checked;
   const multiVal = buildMultiSizeText();
@@ -1937,7 +2026,11 @@ function resetAll() {
   document.querySelector('input[name="violin-type"][value="violin"]').checked = true;
   document.getElementById('violin-type-area').classList.toggle('hidden', currentCat !== 'violin');
   rebuildViolinSizeOptions();
-  document.getElementById('bow-size-area').classList.remove('hidden');
+  // ギター種別もエレキに戻す（バイオリン種別と挙動を揃える）。
+  // リセットしないと、前商品がアコギだった場合に次の商品でもアコギ用の選択肢が並んでしまう。
+  guitarType = 'electric';
+  document.querySelector('input[name="guitar-type"][value="electric"]').checked = true;
+  document.getElementById('guitar-type-area').classList.toggle('hidden', currentCat !== 'guitar');  document.getElementById('bow-size-area').classList.remove('hidden');
   document.getElementById('bow-size-chk').checked = false;
   document.getElementById('bow-size-select-area').classList.add('hidden');
   rebuildBowSizeOptions();
@@ -2123,6 +2216,18 @@ function parsePastedMemo() {
     });
   });
 
+  // 貼り付けられたテキストが自社記録メモの形式かを検証する。
+  // 形式チェックをしないと、無関係なテキストでも「解析完了」と表示され、
+  // 実際には何も復元されていないのにコピーできたと誤認してしまう。
+  const REQUIRED_KEYS = ['商品ランク', 'カテゴリ', '外装', '動作', 'サイズ', '付属'];
+  const foundKeys = REQUIRED_KEYS.filter(k => data[k] !== undefined);
+  if(foundKeys.length < 2) {
+    resultEl.textContent = '自社記録メモの形式ではないため解析できませんでした。①または②のモードで生成したメモをそのまま貼り付けてください。';
+    resultEl.style.color = '#c00';
+    return false;
+  }
+  const missingKeys = REQUIRED_KEYS.filter(k => data[k] === undefined);
+
   // 前回の解析・入力状態をクリアしてから復元（連続解析時の残留防止）
   resetAll();
 
@@ -2219,7 +2324,21 @@ function parsePastedMemo() {
       }
       const baseChk = document.querySelector(`.op-base-chk[value="${escAttr(part)}"]`);
       const opChk = document.querySelector(`.och[value="${escAttr(part)}"]`);
-      if(baseChk) { baseChk.checked = true; opMatched++; }
+      if(baseChk) {
+        // 動作の基本項目は排他選択（1つだけ選べる）設計のグループ。
+        // ランクC/Dでは buildOpBase() が1番目の項目を自動でチェック済みの状態で
+        // ここに来るため、他を外さずにこの項目だけをONにすると「2項目が同時に
+        // チェックされた状態」になり、出力に両方の文言が出てしまう。
+        // （例：デフォルトの「出音確認済です。」が残ったまま「通電確認済です。」を追加）
+        // ただしオーディオ/ターンテーブル/スピーカー/ギターアンプ/カメラのG・Jランクと
+        // 鍵盤楽器は複数選択可の設計（onchange属性なし）なので、その場合は他を外さない。
+        const isExclusiveGroup = baseChk.hasAttribute('onchange');
+        if(isExclusiveGroup) {
+          document.querySelectorAll('.op-base-chk').forEach(c => { if(c !== baseChk) c.checked = false; });
+        }
+        baseChk.checked = true;
+        opMatched++;
+      }
       else if(opChk) { opChk.checked = true; opMatched++; }
       else if(part === '固着はありません。') { document.getElementById('no-kotchaku-chk').checked = true; opMatched++; }
       else {
@@ -2276,6 +2395,7 @@ function parsePastedMemo() {
   // サイズ復元
   let sizeRaw = (data['サイズ']||'').trim();
   let sizeMatched = false;
+  const sizeParseWarnings = []; // 自店舗非対応の配送方法など、復元時に補正した内容の警告メッセージ
   // シンバル／ドラムの直径復元
   document.getElementById('cymbal-diameter-area').classList.toggle('hidden', cat !== 'cymbal');
   document.getElementById('weight-area').classList.toggle('hidden', cat === 'cymbal');
@@ -2384,7 +2504,13 @@ function parsePastedMemo() {
       }
       // 業者判定
       const NORMAL_CARRIERS = ['ゆうパック','佐川急便','ヤマト運輸','西濃運輸'];
-      const carrierMatch = NORMAL_CARRIERS.find(c => rest.startsWith(c)) || null;
+      let carrierMatch = NORMAL_CARRIERS.find(c => rest.startsWith(c)) || null;
+      // 自店舗で対応していない配送方法（例：西濃運輸は大阪門真店限定）が復元されないようにする。
+      // 店舗間でメモを融通する運用は取らない方針のため、該当時はゆうパックに置き換えて警告する。
+      if(carrierMatch === '西濃運輸' && !STORE.hasSeino) {
+        sizeParseWarnings.push('西濃運輸（他店舗専用の配送方法）が含まれていたため、ゆうパックに置き換えました。配送方法を確認してください。');
+        carrierMatch = 'ゆうパック';
+      }
       if(carrierMatch) {
         document.querySelector(`input[name=carrier][value="${escAttr(carrierMatch)}"]`).checked = true;
         onCarrierChange(); updateCarrierColor();
@@ -2431,10 +2557,12 @@ function parsePastedMemo() {
   if(accExtra && accExtra !== 'なし') document.getElementById('acc-free').value = accExtra;
 
   // 結果表示
-  const appPct = appTotal ? Math.round(appMatched/appTotal*100) : 100;
-  const opPct = opTotal ? Math.round(opMatched/opTotal*100) : 100;
-  resultEl.style.color = '#2a7';
-  resultEl.textContent = `解析完了：外装 ${appMatched}/${appTotal}項目・動作 ${opMatched}/${opTotal}項目を復元しました。${sizeMatched?'':' ※サイズの復元に失敗しました、手動で確認してください。'}`;
+  const warnings = [...sizeParseWarnings];
+  if(!sizeMatched) warnings.push('サイズの復元に失敗しました');
+  if(missingKeys.length) warnings.push(`メモに「${missingKeys.join('・')}」の行がありません`);
+  resultEl.style.color = warnings.length ? '#c60' : '#2a7';
+  resultEl.textContent = `解析完了：外装 ${appMatched}/${appTotal}項目・動作 ${opMatched}/${opTotal}項目を復元しました。`
+    + (warnings.length ? ` ※${warnings.join('／')}。生成内容を必ず確認してください。` : '');
   return true;
 }
 
