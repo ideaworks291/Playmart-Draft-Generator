@@ -1216,7 +1216,16 @@ function selCat(btn) {
 
 // ===== 入力値の妥当範囲（明らかな入力ミスの検出用） =====
 // 範囲外はエラーとして生成を中断する。実際の運用に合わせて随時調整可能。
-const SIZE_MIN = 40, SIZE_MAX = 260; // ゆうパック/佐川急便/ヤマト運輸/西濃運輸のサイズ（cm、単一指定時のみ対象）
+const SIZE_MIN = 40, SIZE_MAX = 260; // 西濃運輸（自由入力）の範囲チェック用（cm）
+// ゆうパック・佐川急便・ヤマト運輸の実在するサイズ区分（2026年7月時点、各社公式情報で確認）。
+// 存在しない組み合わせ（佐川急便に120サイズは無い／ヤマト運輸に180サイズは無い等）を
+// 選べないようにするため、自由入力ではなくこの配列からプルダウンを生成する。
+// 西濃運輸は貨物便でサイズの階級制ではないため、従来通り自由入力のまま。
+const CARRIER_SIZES = {
+  'ゆうパック': ['60','80','100','120','140','160','170'],
+  '佐川急便': ['60','80','100','140','160'], // 120サイズが存在しない（101cm以上は140サイズ扱い）
+  'ヤマト運輸': ['60','80','100','120','140','160','200'], // 160の次が200（180は存在しない）
+};
 const WEIGHT_MIN = 0.1, WEIGHT_MAX = 100; // 重量（kg）
 const DIAMETER_MIN = 10, DIAMETER_MAX = 70; // シンバル・ドラムの直径（cm）。標準インチ表（6〜26インチ＝約15〜66cm）に余裕を持たせた範囲
 
@@ -1547,6 +1556,37 @@ function onCarrierChange() {
   const isNormalSizeCarrier = v==='ゆうパック' || v==='佐川急便' || v==='ヤマト運輸' || v==='西濃運輸';
   document.getElementById('size-normal-area').classList.toggle('hidden', !isNormalSizeCarrier);
   document.getElementById('size-jitbox-area').classList.toggle('hidden', v!=='JITBOX');
+  rebuildSizeInputElement(v);
+  rebuildAllMultiSizeInputs(v);
+}
+
+// #size-input要素をキャリアに応じて差し替える。ゆうパック/佐川急便/ヤマト運輸は実在する
+// サイズしか選べないプルダウンに、西濃運輸（貨物便でサイズの階級制ではない）は
+// 従来通りの自由入力(cm数値)のままにする。idは変えないので、検証・リセット・CSV出力・
+// メモ復元など他の全ての参照箇所は変更不要で動く。
+function rebuildSizeInputElement(carrier) {
+  const old = document.getElementById('size-input');
+  if(!old) return;
+  const prevValue = old.value;
+  const sizes = CARRIER_SIZES[carrier];
+  let el;
+  if(sizes) {
+    el = document.createElement('select');
+    el.id = 'size-input';
+    el.innerHTML = `<option value="" disabled selected>選択してください</option>` +
+      sizes.map(s => `<option value="${s}">${s}サイズ</option>`).join('');
+    if(sizes.includes(prevValue)) el.value = prevValue; // 同じ値が新キャリアにも存在するなら維持
+  } else {
+    // 西濃運輸：従来通りの自由入力
+    el = document.createElement('input');
+    el.type = 'text';
+    el.id = 'size-input';
+    el.placeholder = '例：140';
+    el.autocomplete = 'off';
+    el.setAttribute('oninput', "this.value=this.value.replace(/[^0-9]/g,'');this.style.borderColor='';this.style.background=''");
+    el.value = /^\d+$/.test(prevValue) ? prevValue : '';
+  }
+  old.replaceWith(el);
 }
 
 function toggleJitboxWeight() {
@@ -1598,8 +1638,9 @@ function addMultiGroupRow() {
   row.className = 'multi-size-row';
   row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px';
   const idx = list.children.length + 1;
+  const carrier = document.querySelector('input[name=carrier]:checked').value;
   row.innerHTML = `<span class="multi-row-label" style="font-size:12px;color:#888;width:38px;flex-shrink:0">個口${idx}</span>
-    <input type="text" class="multi-size-input" placeholder="例：140" style="width:80px;padding:6px 8px;border:1px solid #ccc;border-radius:6px;font-size:13px;font-family:inherit" oninput="updateMultiPreview()">
+    <span class="multi-size-input-wrap"></span>
     <span style="font-size:12px;color:#888">×</span>
     <button type="button" class="step-btn-sm" onclick="decGroupCount(this)">－</button>
     <span class="multi-count-val" style="min-width:1.4em;text-align:center;font-size:13px;font-weight:600">1</span>
@@ -1607,8 +1648,45 @@ function addMultiGroupRow() {
     <span style="font-size:12px;color:#888">個</span>
     <button type="button" class="del-btn" onclick="removeMultiGroupRow(this)" style="${list.children.length < 1 ? 'visibility:hidden' : ''}">－</button>`;
   list.appendChild(row);
+  rebuildMultiSizeInput(row, carrier, '');
   updateMultiRowLabels();
   updateMultiPreview();
+}
+
+// 個口ごとのサイズ入力を、単一サイズ欄(rebuildSizeInputElement)と同じ考え方でキャリアに
+// 応じてselect(実在サイズのみ)⇔input(西濃運輸の自由入力)に差し替える。
+function rebuildMultiSizeInput(row, carrier, prevValue) {
+  const wrap = row.querySelector('.multi-size-input-wrap');
+  if(!wrap) return;
+  const sizes = CARRIER_SIZES[carrier];
+  let el;
+  if(sizes) {
+    el = document.createElement('select');
+    el.className = 'multi-size-input';
+    el.style.cssText = 'width:88px;padding:6px 4px;border:1px solid #ccc;border-radius:6px;font-size:13px;font-family:inherit';
+    el.innerHTML = `<option value="" disabled selected>選択</option>` + sizes.map(s => `<option value="${s}">${s}サイズ</option>`).join('');
+    if(sizes.includes(prevValue)) el.value = prevValue;
+    el.addEventListener('change', updateMultiPreview);
+  } else {
+    el = document.createElement('input');
+    el.type = 'text';
+    el.className = 'multi-size-input';
+    el.placeholder = '例：140';
+    el.style.cssText = 'width:80px;padding:6px 8px;border:1px solid #ccc;border-radius:6px;font-size:13px;font-family:inherit';
+    el.value = /^\d+$/.test(prevValue) ? prevValue : '';
+    el.addEventListener('input', updateMultiPreview);
+  }
+  wrap.innerHTML = '';
+  wrap.appendChild(el);
+}
+
+// キャリア変更時、既存の全個口行の入力欄を作り直す（値は同じサイズが新キャリアにもあれば維持）
+function rebuildAllMultiSizeInputs(carrier) {
+  document.querySelectorAll('#multi-size-list .multi-size-row').forEach(row => {
+    const oldInput = row.querySelector('.multi-size-input');
+    const prevValue = oldInput ? oldInput.value.trim() : '';
+    rebuildMultiSizeInput(row, carrier, prevValue);
+  });
 }
 
 function removeMultiGroupRow(btn) {
