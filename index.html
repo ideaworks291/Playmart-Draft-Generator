@@ -2734,6 +2734,10 @@ function resetAll() {
 
   document.querySelector('input[name=carrier][value="ゆうパック"]').checked = true;
   updateCarrierColor();
+  // ここでrebuildSizeInputElementを呼ばないと、直前に佐川急便/ヤマト運輸を選んでいた場合、
+  // キャリアの選択自体はゆうパックに戻るのに、サイズ欄（#size-input）だけ前のキャリアの
+  // プルダウン（例：佐川急便の選択肢）が残ってしまう（実際に発生が報告された不具合）。
+  rebuildSizeInputElement('ゆうパック');
   document.getElementById('size-normal-area').classList.remove('hidden');
   document.getElementById('size-jitbox-area').classList.add('hidden');
 
