@@ -1195,7 +1195,19 @@ function selCat(btn) {
   const shamisenArea = document.getElementById('shamisen-spec-area');
   if(shamisenArea){
     shamisenArea.classList.toggle('hidden', !isShamisen);
-    if(isShamisen) buildShamisenSpecs();
+    if(isShamisen) {
+      // バイオリンのviolinTypeリセットと同じパターン。ここでリセットしないと、
+      // 前回このカテゴリで三線(sanshin)を選んでいた場合、他カテゴリを経由して
+      // 三味線・三線に戻ってきた時に三線のまま（コメントに反して「三味線がデフォルト」
+      // になっていない）という状態になる。
+      shamisenType = 'shamisen';
+      const shamisenTypeRadio = document.querySelector('input[name="shamisen-type"][value="shamisen"]');
+      if(shamisenTypeRadio) shamisenTypeRadio.checked = true;
+      document.querySelectorAll('#shamisen-type-group .carrier-label').forEach(l => {
+        l.classList.toggle('selected', !!l.querySelector('input:checked'));
+      });
+      buildShamisenSpecs();
+    }
   }
   buildAccCatChks(); // カテゴリ別の付属品チェック欄を構築（対象外カテゴリでは非表示になる）
   if(isViolin) {
